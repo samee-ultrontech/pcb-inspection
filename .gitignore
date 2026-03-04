@@ -1,0 +1,16 @@
+# Virtual environment
+venv/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+# Output images (generated files, not source)
+output/*.jpg
+output/*.png
+# Model weights (too large for GitHub)
+models/*.pt
+# OS files
+.DS_Store
+Thumbs.db
+# VS Code settings
+.vscode/
