@@ -45,11 +45,11 @@ Image input (data/)
   → scripts/preprocess.py        # 7-step OpenCV pipeline
       1. BGR → Grayscale
       2. GaussianBlur (kernel must be odd)
-      3. adaptiveThreshold → binary
-      4. Canny edge detection
-      5. findContours (area > 100px)
-      6. ORB keypoints + homography → warpPerspective (align query to reference)
-      7. SSIM score vs reference (0.0–1.0)
+      3. Otsu threshold → binary (query + reference)
+      4. Canny edge detection on binary images (query + reference)
+      5. ORB keypoint detection on edge maps + Lowe's ratio test matching
+      6. findHomography + warpPerspective → bgr_aligned, gray_aligned
+      7. [TODO] compute_ssim → ssim_score + verdict_hint
   → verdict_hint: PASS_CANDIDATE (≥0.85) / FLAG_CANDIDATE (0.80–0.85) / FAIL_CANDIDATE (<0.80)
   → [Phase 4–5] YOLOv8 inference on aligned image → defect bounding boxes
   → [Phase 6] Final PASS/FAIL verdict + CSV log
@@ -59,7 +59,7 @@ Image input (data/)
 - **scripts/config.py** — All thresholds and paths in one place (`SSIM_PASS_THRESHOLD`, `SSIM_FLAG_THRESHOLD`, `IMAGE_SIZE`, `CONFIDENCE_THRESHOLD`, `OUTPUT_DIR`, `REFERENCE_IMAGE`). Change behaviour here first.
 - **scripts/preprocess.py** — Core function `preprocess_frame(bgr_query, bgr_reference, blur_k, ssim_min)` returns a dict: `{bgr_aligned, gray_aligned, ssim_score, verdict_hint}`. Accepts numpy arrays only, not file paths.
 - **scripts/load_image.py** — `load_image(path)` wraps `cv2.imread`, validates the result, and copies to `output/`.
-- **tests/test_preprocess.py** — 4 passing input-validation tests; 3 skipped tests awaiting real PCB images (`data/reference.jpg`).
+- **tests/test_preprocess.py** — 10 passing tests (input validation + Step 2 GaussianBlur behaviour + UT-PP-02); 2 skipped awaiting real PCB images (`data/reference.jpg`).
 
 ### Data & model directories
 - `data/` — Raw input images. `data/reference.jpg` (known-good board) is required at runtime but not committed.
@@ -71,10 +71,12 @@ Image input (data/)
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Project setup, image loading | Complete |
-| 2 | OpenCV preprocessing pipeline | Complete (code done, no real PCB data yet) |
+| 2 | OpenCV preprocessing pipeline | 6/7 steps complete — Step 7 (compute_ssim + verdict_hint) remaining |
 | 3 | Dataset collection & YOLOv8 annotation | Pending |
 | 4 | YOLOv8 model training | Pending |
 | 5 | Defect detection inference | Pending |
 | 6 | PASS/FAIL verdict logic & CSV reporting | Pending |
 
-The 3 skipped pytest tests will be unblocked once `data/reference.jpg` (a real known-good PCB image) is available.
+Phase 2 steps done: grayscale conversion, GaussianBlur, Otsu threshold, Canny edge detection, ORB keypoint matching (Lowe's ratio test), findHomography + warpPerspective. Step 7 (`compute_ssim` + `verdict_hint`) is next.
+
+The 2 remaining skipped pytest tests will be unblocked once `data/reference.jpg` (a real known-good PCB image) is available.

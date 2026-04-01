@@ -1,6 +1,32 @@
 # scripts/preprocess.py
-# Phase 2 — OpenCV pre-processing pipeline
-# Spec reference: Section 7.8
+"""
+Phase 2 OpenCV preprocessing pipeline for PCB inspection.
+
+Implements spec §7.2 (image normalisation) and §7.8 (alignment pipeline).
+
+Inputs
+------
+bgr_query     : BGR numpy array — raw frame captured from the inspection camera.
+bgr_reference : BGR numpy array — pre-loaded image of a known-good board.
+
+Outputs
+-------
+A dict with:
+    bgr_aligned  : query frame warped to the reference coordinate space (BGR).
+    gray_aligned : grayscale version of bgr_aligned, used for SSIM comparison.
+    ssim_score   : structural similarity index vs the reference (0.0–1.0).
+    verdict_hint : PASS_CANDIDATE / FLAG_CANDIDATE / FAIL_CANDIDATE.
+
+Pipeline steps
+--------------
+1. Colour conversion  — BGR → grayscale for both images.
+2. GaussianBlur       — noise suppression before thresholding.
+3. Otsu threshold     — global binarisation of both blurred images.
+4. Canny              — edge detection on both binary images.
+5. ORB + matching     — keypoint detection on edge maps; Lowe's ratio test.
+6. Homography + warp  — perspective alignment of query onto reference.
+7. SSIM               — structural similarity score and verdict (TODO).
+"""
 
 import cv2
 import numpy as np
