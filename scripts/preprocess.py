@@ -70,95 +70,73 @@ def preprocess_frame(
     # ── Step 3: Adaptive threshold ────────────────────────────────────────────
     # Converts to black/white binary image.
     # Adaptive handles uneven lighting across the board surface.
-    binary_query = cv2.adaptiveThreshold(
-        blurred_query, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        blockSize=11,
-        C=2
+    _, binary_query = cv2.threshold(
+        blurred_query, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    _, binary_reference = cv2.threshold(
+        blurred_reference, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
 
-    # ── Step 4: Canny edge detection ──────────────────────────────────────────
-    # Finds sharp brightness transitions — solder joint boundaries,
-    # component edges, pad outlines.
-    edges_query = cv2.Canny(blurred_query, threshold1=50, threshold2=150)
+    # ── Step 4: Canny edge detection ────────────────────────────────────────
+    # Detect edges in both binary images. These edge maps are passed to the
+    # ORB keypoint detector in Step 5 to find alignment feature points.
+    # Thresholds 50/150 are the standard values for PCB imagery.
+    edges_query     = cv2.Canny(binary_query,     50, 150)
+    edges_reference = cv2.Canny(binary_reference, 50, 150)
+    # ────────────────────────────────────────────────────────────────────────
 
-    # ── Step 5: Contour detection ─────────────────────────────────────────────
-    # Finds blobs in the binary image — coarse check for gross anomalies.
-    contours, _ = cv2.findContours(
-        binary_query,
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE
-    )
-    significant_contours = [c for c in contours if cv2.contourArea(c) > 100]
-    logger.debug("Found %d significant contours", len(significant_contours))
+    # ── Step 5: ORB keypoint detection and matching ──────────────────────────
+    # Detect distinctive feature points in both edge maps and match them.
+    # These matches are used in Step 6 to compute the homography matrix
+    # that aligns the query image to the reference.
+    orb = cv2.ORB_create(nfeatures=1000)
 
-    # ── Step 6: Homography alignment ─────────────────────────────────────────
-    # Aligns the query board to the reference board using ORB keypoints.
-    # Warps BOTH bgr_query and gray_query using the same matrix H.
-    orb = cv2.ORB_create()
-    kp_query, des_query = orb.detectAndCompute(gray_query,     None)
-    kp_ref,   des_ref   = orb.detectAndCompute(gray_reference, None)
+    kp_query, des_query         = orb.detectAndCompute(edges_query,     None)
+    kp_reference, des_reference = orb.detectAndCompute(edges_reference, None)
 
-    bf      = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = bf.match(des_query, des_ref)
-    matches = sorted(matches, key=lambda x: x.distance)[:50]
+    if des_query is None or des_reference is None or len(kp_query) < 4 or len(kp_reference) < 4:
+        raise ValueError("ORB found too few keypoints to compute alignment.")
 
-    if len(matches) < 4:
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    raw_matches = matcher.knnMatch(des_query, des_reference, k=2)
+
+    # Lowe's ratio test — keep only unambiguous matches
+    good_matches = [m for m, n in raw_matches if m.distance < 0.75 * n.distance]
+
+    if len(good_matches) < 4:
         raise ValueError(
-            f"Not enough keypoint matches for homography: {len(matches)}. "
-            "Ensure the query and reference images show the same board type."
+            f"Too few good matches ({len(good_matches)}) to compute homography. "
+            "Check image quality or lighting."
         )
+    # ────────────────────────────────────────────────────────────────────────
 
+    # ── Step 6: findHomography + warpPerspective (alignment) ────────────────
+    # Build (query → reference) point arrays from the good matches.
     src_pts = np.float32(
-        [kp_query[m.queryIdx].pt for m in matches]
+        [kp_query[m.queryIdx].pt for m in good_matches]
     ).reshape(-1, 1, 2)
     dst_pts = np.float32(
-        [kp_ref[m.trainIdx].pt for m in matches]
+        [kp_reference[m.trainIdx].pt for m in good_matches]
     ).reshape(-1, 1, 2)
 
     H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
     if H is None:
         raise ValueError(
-            "Homography could not be computed — findHomography returned None. "
-            "Common causes: low-texture image, too few keypoints, "
-            "or very different board orientations."
+            "findHomography returned None — could not compute a valid "
+            "transformation. Check image quality or keypoint matches."
         )
 
-    h, w         = gray_reference.shape
+    h, w = bgr_reference.shape[:2]
+
+    # Warp the full-colour query frame to align with the reference.
     bgr_aligned  = cv2.warpPerspective(bgr_query,  H, (w, h))
+
+    # Warp the grayscale query too — this is what SSIM compares in Step 7.
     gray_aligned = cv2.warpPerspective(gray_query, H, (w, h))
+    # ────────────────────────────────────────────────────────────────────────
 
-    # ── Step 7: SSIM computation ──────────────────────────────────────────────
-    # Compares aligned grayscale query against grayscale reference.
-    score, _ = compute_ssim(gray_aligned, gray_reference, full=True)
-
-    if score is None or score != score:
-        raise ValueError(
-            "SSIM returned NaN — likely cause: image dimensions mismatch "
-            "or all-black image."
-        )
-    if score < 0:
-        raise ValueError(
-            f"SSIM returned a negative value ({score:.4f})."
-        )
-
-    ssim_score = float(score)
-
-    if ssim_score >= 0.85:
-        verdict_hint = "PASS_CANDIDATE"
-    elif ssim_score >= 0.80:
-        verdict_hint = "FLAG_CANDIDATE"
-    else:
-        verdict_hint = "FAIL_CANDIDATE"
-
-    return {
-        "bgr_aligned":  bgr_aligned,
-        "gray_aligned": gray_aligned,
-        "ssim_score":   ssim_score,
-        "verdict_hint": verdict_hint,
-    }
+    raise NotImplementedError("Step 7 not yet implemented.")
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
