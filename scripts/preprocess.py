@@ -32,6 +32,7 @@ import cv2
 import numpy as np
 import logging
 from skimage.metrics import structural_similarity as compute_ssim
+from scripts.config import SSIM_PASS_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,33 @@ def preprocess_frame(
     gray_aligned = cv2.warpPerspective(gray_query, H, (w, h))
     # ────────────────────────────────────────────────────────────────────────
 
-    raise NotImplementedError("Step 7 not yet implemented.")
+    # ── Step 7: SSIM score + verdict hint ────────────────────────────────────
+    # Compare the aligned grayscale query against the reference.
+    # data_range=255 because both images are uint8 (0–255).
+    ssim_score = compute_ssim(gray_aligned, gray_reference, data_range=255)
+
+    if np.isnan(ssim_score) or ssim_score < 0:
+        raise ValueError(
+            f"SSIM returned an invalid score: {ssim_score}. "
+            "Check that the aligned image is not blank or corrupt."
+        )
+
+    if ssim_score >= SSIM_PASS_THRESHOLD:
+        verdict_hint = "PASS_CANDIDATE"
+    elif ssim_score >= ssim_min:
+        verdict_hint = "FLAG_CANDIDATE"
+    else:
+        verdict_hint = "FAIL_CANDIDATE"
+
+    logger.info("SSIM=%.4f  verdict=%s", ssim_score, verdict_hint)
+    # ────────────────────────────────────────────────────────────────────────
+
+    return {
+        "bgr_aligned":  bgr_aligned,
+        "gray_aligned": gray_aligned,
+        "ssim_score":   ssim_score,
+        "verdict_hint": verdict_hint,
+    }
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
@@ -191,7 +218,7 @@ if __name__ == "__main__":
     print(f"Reference loaded: {ref.shape}")
 
     try:
-        result = preprocess_frame(query, ref, blur_k=args.blur_k)
+        result = preprocess_frame(query, ref, blur_k=args.blur_k, ssim_min=args.ssim_min)
     except Exception as e:
         print(f"ERROR: {e}")
         sys.exit(1)

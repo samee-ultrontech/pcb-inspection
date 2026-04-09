@@ -49,7 +49,7 @@ Image input (data/)
       4. Canny edge detection on binary images (query + reference)
       5. ORB keypoint detection on edge maps + Lowe's ratio test matching
       6. findHomography + warpPerspective → bgr_aligned, gray_aligned
-      7. [TODO] compute_ssim → ssim_score + verdict_hint
+      7. compute_ssim → ssim_score + verdict_hint
   → verdict_hint: PASS_CANDIDATE (≥0.85) / FLAG_CANDIDATE (0.80–0.85) / FAIL_CANDIDATE (<0.80)
   → [Phase 4–5] YOLOv8 inference on aligned image → defect bounding boxes
   → [Phase 6] Final PASS/FAIL verdict + CSV log
@@ -71,12 +71,12 @@ Image input (data/)
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Project setup, image loading | Complete |
-| 2 | OpenCV preprocessing pipeline | 6/7 steps complete — Step 7 (compute_ssim + verdict_hint) remaining |
+| 2 | OpenCV preprocessing pipeline | Complete |
 | 3 | Dataset collection & YOLOv8 annotation | Pending |
 | 4 | YOLOv8 model training | Pending |
 | 5 | Defect detection inference | Pending |
 | 6 | PASS/FAIL verdict logic & CSV reporting | Pending |
 
-Phase 2 steps done: grayscale conversion, GaussianBlur, Otsu threshold, Canny edge detection, ORB keypoint matching (Lowe's ratio test), findHomography + warpPerspective. Step 7 (`compute_ssim` + `verdict_hint`) is next.
+All 7 Phase 2 steps are complete: grayscale conversion, GaussianBlur, Otsu threshold, Canny edge detection, ORB keypoint matching (Lowe's ratio test), findHomography + warpPerspective, and SSIM scoring with verdict_hint.
 
 The 2 remaining skipped pytest tests will be unblocked once `data/reference.jpg` (a real known-good PCB image) is available.
