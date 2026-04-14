@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import os
 from skimage.metrics import structural_similarity as compute_ssim
+from scripts.config import SSIM_PASS_THRESHOLD, SSIM_FLAG_THRESHOLD
 
 os.makedirs("output", exist_ok=True)
 
@@ -73,59 +74,71 @@ except Exception as e:
     log(2, "GaussianBlur", FAIL, str(e))
     blurred = gray
 
-# ── Step 3: adaptiveThreshold ─────────────────────────────────────────────────
-print("Step 3 — cv2.adaptiveThreshold")
+# ── Step 3: Otsu threshold ────────────────────────────────────────────────────
+print("Step 3 — cv2.threshold (Otsu)")
 try:
     assert blurred is not None, "Step 2 must pass first"
-    binary = cv2.adaptiveThreshold(
-        blurred, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        blockSize=11, C=2
+    _, binary = cv2.threshold(
+        blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
     cv2.imwrite("output/verify_3_binary.jpg", binary)
     assert binary.shape == blurred.shape, "Shape mismatch"
     unique_vals = np.unique(binary)
     assert set(unique_vals).issubset({0, 255}), \
         f"Binary image contains non-binary values: {unique_vals}"
-    log(3, "adaptiveThreshold", PASS,
+    log(3, "threshold (Otsu)", PASS,
         f"shape={binary.shape} unique_values={unique_vals}")
 except Exception as e:
-    log(3, "adaptiveThreshold", FAIL, str(e))
+    log(3, "threshold (Otsu)", FAIL, str(e))
     binary = None
 
 # ── Step 4: Canny ─────────────────────────────────────────────────────────────
 print("Step 4 — cv2.Canny")
+edges = None
 try:
-    assert blurred is not None, "Step 2 must pass first"
-    edges = cv2.Canny(blurred, threshold1=50, threshold2=150)
+    assert binary is not None, "Step 3 must pass first"
+    edges = cv2.Canny(binary, threshold1=50, threshold2=150)
     cv2.imwrite("output/verify_4_edges.jpg", edges)
-    assert edges.shape == blurred.shape, "Shape mismatch"
-    assert edges.dtype == np.uint8,      "Wrong dtype"
+    assert edges.shape == binary.shape, "Shape mismatch"
+    assert edges.dtype == np.uint8,     "Wrong dtype"
     edge_pixels = np.count_nonzero(edges)
     assert edge_pixels > 0, "No edges detected — image may be blank"
     log(4, "Canny", PASS, f"edge_pixels={edge_pixels}")
 except Exception as e:
     log(4, "Canny", FAIL, str(e))
 
-# ── Step 5: findContours ──────────────────────────────────────────────────────
-print("Step 5 — cv2.findContours")
+# ── Step 5: ORB keypoint detection and matching ───────────────────────────────
+print("Step 5 — ORB + Lowe's ratio test")
 try:
-    assert binary is not None, "Step 3 must pass first"
-    contours, _ = cv2.findContours(
-        binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    significant = [c for c in contours if cv2.contourArea(c) > 100]
-    # Draw contours on a copy for visual inspection
-    contour_img = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
-    cv2.drawContours(contour_img, significant, -1, (0, 255, 0), 1)
-    cv2.imwrite("output/verify_5_contours.jpg", contour_img)
-    assert len(contours) > 0,    "No contours found at all"
-    assert len(significant) > 0, "No significant contours (area > 100)"
-    log(5, "findContours", PASS,
-        f"total={len(contours)} significant={len(significant)}")
+    assert edges is not None, "Step 4 must pass first"
+    orb = cv2.ORB_create(nfeatures=1000)
+    kp1, des1 = orb.detectAndCompute(edges, None)
+    # Use a slightly shifted edge map as a stand-in for a second image
+    M_shift = np.float32([[1, 0, 5], [0, 1, 5]])
+    edges_shifted = cv2.warpAffine(edges, M_shift, (edges.shape[1], edges.shape[0]))
+    kp2, des2 = orb.detectAndCompute(edges_shifted, None)
+
+    assert des1 is not None and des2 is not None, "ORB found no descriptors"
+    assert len(kp1) >= 4 and len(kp2) >= 4, \
+        f"Too few keypoints: {len(kp1)} / {len(kp2)}"
+
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    raw_matches = matcher.knnMatch(des1, des2, k=2)
+    good_matches = [m for m, n in raw_matches if m.distance < 0.75 * n.distance]
+
+    assert len(good_matches) >= 4, \
+        f"Too few good matches after ratio test: {len(good_matches)}"
+
+    # Draw matches for visual inspection
+    match_img = cv2.drawMatches(edges, kp1, edges_shifted, kp2,
+                                good_matches[:20], None,
+                                flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+    cv2.imwrite("output/verify_5_matches.jpg", match_img)
+
+    log(5, "ORB + Lowe's ratio test", PASS,
+        f"keypoints={len(kp1)} good_matches={len(good_matches)}")
 except Exception as e:
-    log(5, "findContours", FAIL, str(e))
+    log(5, "ORB + Lowe's ratio test", FAIL, str(e))
 
 # ── Step 6: Homography + warpPerspective ──────────────────────────────────────
 print("Step 6 — cv2.warpPerspective (homography)")
@@ -179,21 +192,20 @@ print("Step 7 — skimage SSIM")
 try:
     assert gray_aligned is not None, "Step 6 must pass first"
     ref_gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    score, _ = compute_ssim(gray_aligned, ref_gray, full=True)
+    score = compute_ssim(gray_aligned, ref_gray, data_range=255)
 
-    assert score is not None,       "SSIM returned None"
-    assert score == score,          "SSIM returned NaN"
-    assert 0.0 <= score <= 1.0,     f"SSIM out of range: {score}"
+    assert score == score,      "SSIM returned NaN"
+    assert 0.0 <= score <= 1.0, f"SSIM out of range: {score}"
 
-    if score >= 0.85:
+    if score >= SSIM_PASS_THRESHOLD:
         hint = "PASS_CANDIDATE"
-    elif score >= 0.80:
+    elif score >= SSIM_FLAG_THRESHOLD:
         hint = "FLAG_CANDIDATE"
     else:
         hint = "FAIL_CANDIDATE"
 
     # Also test: reference vs itself should return 1.0
-    score_self, _ = compute_ssim(ref_gray, ref_gray, full=True)
+    score_self = compute_ssim(ref_gray, ref_gray, data_range=255)
     assert abs(score_self - 1.0) < 1e-6, \
         f"SSIM of ref vs itself should be 1.0, got {score_self}"
 

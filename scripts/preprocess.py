@@ -25,7 +25,7 @@ Pipeline steps
 4. Canny              — edge detection on both binary images.
 5. ORB + matching     — keypoint detection on edge maps; Lowe's ratio test.
 6. Homography + warp  — perspective alignment of query onto reference.
-7. SSIM               — structural similarity score and verdict (TODO).
+7. SSIM               — structural similarity score and verdict.
 """
 
 import cv2
