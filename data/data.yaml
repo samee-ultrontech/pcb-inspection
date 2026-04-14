@@ -1,0 +1,31 @@
+# YOLOv8 dataset configuration for PCB wave-soldering inspection.
+#
+# Directory layout expected under data/ (created by scripts/organise_dataset.py):
+#
+#   data/
+#   ├── images/
+#   │   ├── train/   ← 80 % of your annotated images
+#   │   └── val/     ← 20 % of your annotated images
+#   └── labels/
+#       ├── train/   ← matching YOLO .txt annotation files
+#       └── val/
+#
+# Run training from the project root:
+#   python scripts/train.py
+
+# Dataset root — relative to the project root (where you run train.py from)
+path: data
+
+train: images/train
+val:   images/val
+
+# Number of defect classes
+nc: 5
+
+# Class names — index must match the integer label in every .txt annotation file
+names:
+  0: solder_bridge   # two pads shorted by excess solder
+  1: missing_solder  # pad has no solder at all
+  2: cold_joint      # dull, grainy joint — poor electrical contact
+  3: lifted_lead     # component pin not touching the pad
+  4: excess_solder   # blob of solder but not a bridge

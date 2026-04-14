@@ -25,3 +25,24 @@ LOG_FILE = "output/inspection_log.csv"
 
 # Path to the reference (known-good) PCB image used for SSIM comparison
 REFERENCE_IMAGE = "data/reference.jpg"
+
+# Path to the trained YOLOv8 weights file produced by train.py
+MODEL_PATH = "models/pcb_yolov8.pt"
+
+# Path to the dataset YAML consumed by YOLOv8 during training
+DATASET_YAML = "data/data.yaml"
+
+# Train/validation split ratio (80 % train, 20 % val)
+TRAIN_SPLIT = 0.8
+
+# Number of training epochs
+EPOCHS = 50
+
+# Defect class names (must match the order in data/data.yaml)
+DEFECT_CLASSES = [
+    "solder_bridge",
+    "missing_solder",
+    "cold_joint",
+    "lifted_lead",
+    "excess_solder",
+]
